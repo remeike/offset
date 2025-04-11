@@ -120,15 +120,15 @@ newtype Requester = Requester { unRequester :: Text
                                             -> [(Text, Text)]
                                             -> IO (Either Int WPResponse) }
 
-data WordpressConfig m =
+data WordpressConfig s m =
      WordpressConfig { wpConfEndpoint      :: Text
                      , wpConfRequester     :: Either UserPassword Requester
                      , wpConfCacheBehavior :: CacheBehavior
-                     , wpConfExtraFields   :: [Field m]
+                     , wpConfExtraFields   :: [Field s m]
                      , wpConfLogger        :: Maybe (Text -> IO ())
                      }
 
-instance Default (WordpressConfig m) where
+instance Default (WordpressConfig s m) where
   def = WordpressConfig "http://127.0.0.1:8080/wp-json"
                         (Left ("offset", "111"))
                         (CacheSeconds 600)

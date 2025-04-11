@@ -52,7 +52,7 @@ library
                      , containers
                      , vector
                      , attoparsec
-                     , larceny
+                     , tk
                      , scientific
                      , atom-basic
                      , xml
@@ -104,7 +104,7 @@ test-Suite test-offset
                      , wai
                      , hspec >= 2
                      , hspec-core
-                     , larceny
+                     , tk
                      , lens
                      , mtl
                      , text

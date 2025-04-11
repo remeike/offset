@@ -29,7 +29,8 @@ import           Data.Text               (Text)
 import qualified Data.Text               as T
 import qualified Data.Text.Encoding      as T
 import qualified Data.Vector             as V
-import           Web.Larceny
+import           TK                hiding ( toText )
+import qualified TK                      as TK
 
 import           Web.Offset.Field
 import           Web.Offset.Posts
@@ -38,12 +39,13 @@ import           Web.Offset.Date
 import           Web.Offset.Types
 import           Web.Offset.Utils
 
-wordpressSubs :: Wordpress b
-              -> [Field s]
-              -> StateT s IO Text
+wordpressSubs :: MonadIO m
+              => Wordpress b
+              -> [Field s m]
+              -> StateT s m Text
               -> WPLens b s
               -> Maybe (MVar (Maybe IntSet))
-              -> Substitutions s
+              -> Substitutions s m
 wordpressSubs wp extraFields getURI wpLens ids =
   subs [ ("wpPosts", wpPostsFill wp extraFields wpLens ids)
        , ("wpPostsAggregate", wpPostsAggregateFill wp extraFields wpLens ids)
@@ -62,12 +64,12 @@ stripTags str = case (T.take 1 str) of
   "<" -> stripTags $ T.drop 1 $ T.dropWhile (/= '>') str
   _ -> (T.take 1 str) <> stripTags (T.drop 1 str)
 
-stripHtmlFill :: Fill s
+stripHtmlFill :: MonadIO m => Fill s m
 stripHtmlFill = Fill $ \attrs (path, tpl) lib -> do
-  text <- runTemplate tpl path mempty lib
-  return $ stripTags text
+  (output, _) <- runTemplate tpl path mempty lib
+  return $ TextOutput $ stripTags $ TK.toHtml output
 
-wpCustomDateFill :: Fill s
+wpCustomDateFill :: MonadIO m => Fill s m
 wpCustomDateFill =
   useAttrs (a "wp_format" % a "date") customDateFill
   where customDateFill mWPFormat date =
@@ -76,11 +78,11 @@ wpCustomDateFill =
               Just d -> fillChildrenWith $ datePartSubs d
               Nothing -> rawTextFill $ "<!-- Unable to parse date: " <> date <> " -->"
 
-wpCustomFill :: Wordpress b -> Fill s
+wpCustomFill :: MonadIO m => Wordpress b -> Fill s m
 wpCustomFill wp =
   useAttrs (a "endpoint") (\e -> customFill wp (EndpointKey e []))
 
-customFill :: Wordpress b -> WPKey -> Fill s
+customFill :: MonadIO m => Wordpress b -> WPKey -> Fill s m
 customFill Wordpress{..} key = Fill $ \attrs (path, tpl) lib ->
   do res <- liftIO $ (cachingGetRetry key :: IO (Either StatusCode WPResponse))
      case (fmap decodeWPResponseBody res :: Either StatusCode (Maybe Value)) of
@@ -88,24 +90,24 @@ customFill Wordpress{..} key = Fill $ \attrs (path, tpl) lib ->
          let notification = "Encountered status code " <> tshow code
                          <> " when querying \"" <> tshow key <> "\"."
          liftIO $ wpLogger notification
-         return $ "<!-- " <> notification <> " -->"
+         return $ TextOutput $ "<!-- " <> notification <> " -->"
        Right (Just json) ->
         unFill (jsonToFill json) attrs (path, tpl) lib
        Right Nothing -> do
          let notification = "Unable to decode JSON for endpoint \"" <> tshow key
          liftIO $ wpLogger $ notification <> ": " <> tshow res
-         return $ "<!-- " <> notification <> "-->"
+         return $ TextOutput $ "<!-- " <> notification <> "-->"
 
-jsonToFill :: Value -> Fill s
+jsonToFill :: MonadIO m => Value -> Fill s m
 jsonToFill (Object o) =
-  Fill $ \_ (path, tpl) lib -> runTemplate tpl path objectSubstitutions lib
+  Fill $ \_ (path, tpl) lib -> fmap fst $ runTemplate tpl path objectSubstitutions lib
   where objectSubstitutions =
           subs $ map (\k -> (transformName (toText k),
                              jsonToFill (fromJust (M.lookup k o))))
                      (M.keys o)
 jsonToFill (Array v) =
   Fill $ \attrs (path, tpl) lib ->
-           V.foldr mappend "" <$> V.mapM (\e -> unFill (jsonToFillArrayItem e) attrs (path, tpl) lib) v
+           fmap RawTextOutput $ V.foldr mappend "" <$> V.mapM (\e -> fmap TK.toHtml $ unFill (jsonToFillArrayItem e) attrs (path, tpl) lib) v
 jsonToFill (String s) = rawTextFill s
 jsonToFill (Number n) = case floatingOrInteger n of
                           Left r -> rawTextFill $ tshow (r :: Double)
@@ -114,7 +116,7 @@ jsonToFill (Bool True) = rawTextFill $ tshow True
 jsonToFill (Bool False) = rawTextFill "<!-- JSON field found, but value is false. -->"
 jsonToFill (Null) = rawTextFill "<!-- JSON field found, but value is null. -->"
 
-jsonToFillArrayItem :: Value -> Fill s
+jsonToFillArrayItem :: MonadIO m => Value -> Fill s m
 jsonToFillArrayItem o@(Object _) = jsonToFill o
 jsonToFillArrayItem a@(Array _) = jsonToFill a
 jsonToFillArrayItem (String s) = fillChildrenWith $ subs [("wpArrayItem", rawTextFill s)]
@@ -126,11 +128,11 @@ jsonToFillArrayItem b@(Bool True) = jsonToFill b
 jsonToFillArrayItem b@(Bool False) = jsonToFill b
 jsonToFillArrayItem n@(Null) = jsonToFill n
 
-wpCustomAggregateFill :: Wordpress b -> Fill s
+wpCustomAggregateFill :: MonadIO m => Wordpress b -> Fill s m
 wpCustomAggregateFill wp =
   useAttrs (a "endpoint") (customAggregateFill wp)
 
-customAggregateFill :: Wordpress b -> Text -> Fill s
+customAggregateFill :: MonadIO m => Wordpress b -> Text -> Fill s m
 customAggregateFill Wordpress{..} endpoint = Fill $ \attrs (path, tpl) lib ->
   do let key = EndpointKey endpoint []
      res <- liftIO $ (cachingGetRetry key :: IO (Either StatusCode WPResponse))
@@ -139,7 +141,7 @@ customAggregateFill Wordpress{..} endpoint = Fill $ \attrs (path, tpl) lib ->
          let notification = "Encountered status code " <> tshow code
                          <> " when querying \"" <> endpoint <> "\"."
          liftIO $ wpLogger notification
-         return $ "<!-- " <> notification <> " -->"
+         return $ TextOutput $ "<!-- " <> notification <> " -->"
        Right (Just json) ->
         unFill (fillChildrenWith $
                     subs [ ("wpCustomItem", jsonToFill json)
@@ -148,13 +150,14 @@ customAggregateFill Wordpress{..} endpoint = Fill $ \attrs (path, tpl) lib ->
        Right Nothing -> do
          let notification = "Unable to decode JSON for endpoint \"" <> endpoint
          liftIO $ wpLogger $ notification <> ": " <> tshow res
-         return $ "<!-- " <> notification <> "-->"
+         return $ TextOutput $ "<!-- " <> notification <> "-->"
 
-wpPostsFill :: Wordpress b
-            -> [Field s]
+wpPostsFill :: MonadIO m
+            => Wordpress b
+            -> [Field s m]
             -> WPLens b s
             -> Maybe (MVar (Maybe IntSet))
-            -> Fill s
+            -> Fill s m
 wpPostsFill wp extraFields wpLens postIdSet = Fill $ \attrs tpl lib ->
   do (postsQuery, wpKey) <- mkPostsQueryAndKey wp attrs
      res <- liftIO $ cachingGetRetry wp wpKey
@@ -163,14 +166,15 @@ wpPostsFill wp extraFields wpLens postIdSet = Fill $ \attrs tpl lib ->
          postsND <- postsWithoutDuplicates wpLens postsQuery posts postIdSet
          addPostIds postIdSet (map fst postsND)
          unFill (wpPostsHelper wp extraFields (map snd postsND)) mempty tpl lib
-       Right Nothing -> return ""
-       Left code     -> liftIO $ logStatusCode wp code
+       Right Nothing -> return $ TextOutput ""
+       Left code     -> fmap TextOutput $ liftIO $ logStatusCode wp code
 
-postsWithoutDuplicates :: WPLens b s
+postsWithoutDuplicates :: MonadIO m
+                       => WPLens b s
                        -> WPQuery
                        -> [Object]
                        -> Maybe (MVar (Maybe IntSet))
-                       -> StateT s IO [(Int, Object)]
+                       -> StateT s m [(Int, Object)]
 postsWithoutDuplicates wpLens postsQuery posts postIdSet = do
   wp <- use wpLens
   let postsW = extractPostIds posts
@@ -184,9 +188,10 @@ postsWithoutDuplicates wpLens postsQuery posts postIdSet = do
         removeDupes (Just wpPostIdSet) =
           filter (\(wpId,_) -> IntSet.notMember wpId wpPostIdSet)
 
-mkPostsQueryAndKey :: Wordpress b
+mkPostsQueryAndKey :: MonadIO m
+                   => Wordpress b
                    -> Attributes
-                   -> StateT s IO (WPQuery, WPKey)
+                   -> StateT s m (WPQuery, WPKey)
 mkPostsQueryAndKey wp attrs = do
   let postsQuery = parseQueryNode (Map.toList attrs)
   filters <- liftIO $ mkFilters wp (qtaxes postsQuery)
@@ -200,11 +205,11 @@ logStatusCode wp code = do
   wpLogger wp notification
   return $ "<!-- " <> notification <> " -->"
 
-wpPostsAggregateFill :: Wordpress b
-            -> [Field s]
+wpPostsAggregateFill :: MonadIO m => Wordpress b
+            -> [Field s m]
             -> WPLens b s
             -> Maybe (MVar (Maybe IntSet))
-            -> Fill s
+            -> Fill s m
 wpPostsAggregateFill wp extraFields wpLens postIdSet = Fill $ \attrs tpl lib ->
   do (postsQuery, wpKey) <- mkPostsQueryAndKey wp attrs
      res <- liftIO $ cachingGetRetry wp wpKey
@@ -216,10 +221,10 @@ wpPostsAggregateFill wp extraFields wpLens postIdSet = Fill $ \attrs tpl lib ->
                     subs [ ("wpPostsItem", wpPostsHelper wp extraFields (map snd postsND'))
                          , ("wpPostsMeta", wpAggregateMetaFill res (qpage postsQuery)) ])
                  mempty tpl lib
-       Right Nothing -> return ""
-       Left code -> liftIO $ logStatusCode wp code
+       Right Nothing -> return $ TextOutput ""
+       Left code -> fmap TextOutput $ liftIO $ logStatusCode wp code
 
-wpAggregateMetaFill :: Either StatusCode WPResponse -> Maybe Int -> Fill s
+wpAggregateMetaFill :: MonadIO m => Either StatusCode WPResponse -> Maybe Int -> Fill s m
 wpAggregateMetaFill (Right (WPResponse headers _)) mCurrentPage = do
   let totalPagesText = maybe "" T.decodeUtf8
                           (lookup "x-wp-totalpages" headers)
@@ -266,18 +271,20 @@ mkFilters wp specLists =
             Just tSpecId -> return $ Just (TaxFilter tName tSpecId)
             Nothing -> return Nothing
 
-wpPostsHelper :: Wordpress b
-              -> [Field s]
+wpPostsHelper :: MonadIO m
+              => Wordpress b
+              -> [Field s m]
               -> [Object]
-              -> Fill s
+              -> Fill s m
 wpPostsHelper wp extraFields postsND =
   mapSubs (postSubs wp extraFields) postsND
 
-wpPostByPermalinkFill :: [Field s]
-                      -> StateT s IO Text
+wpPostByPermalinkFill :: MonadIO m
+                      => [Field s m]
+                      -> StateT s m Text
                       -> WPLens b s
                       -> Maybe (MVar (Maybe IntSet))
-                      -> Fill s
+                      -> Fill s m
 wpPostByPermalinkFill extraFields getURI wpLens postIdSet = maybeFillChildrenWith' $
   do uri <- getURI
      let mperma = parsePermalink uri
@@ -295,28 +302,29 @@ wpPostByPermalinkFill extraFields getURI wpLens postIdSet = maybeFillChildrenWit
               _ -> return Nothing
 
 
-feedSubs :: [Field s] -> WPLens b s -> Object -> Maybe (MVar (Maybe IntSet)) -> Substitutions s
+feedSubs :: MonadIO m => [Field s m] -> WPLens b s -> Object -> Maybe (MVar (Maybe IntSet)) -> Substitutions s m
 feedSubs fields lens obj postIdSet =
   subs $ [("wpPost", wpPostFromObjectFill fields lens obj postIdSet)]
 
-wpPostFromObjectFill :: [Field s]
+wpPostFromObjectFill :: MonadIO m
+                      => [Field s m]
                       -> WPLens b s
                       -> Object
                       -> Maybe (MVar (Maybe IntSet))
-                      -> Fill s
+                      -> Fill s m
 wpPostFromObjectFill extraFields wpLens postObj postIdSet = maybeFillChildrenWith' $
   do  addPostIds postIdSet [fst (extractPostId postObj)]
       wp <- use wpLens
       return $ Just (postSubs wp extraFields postObj)
 
-wpNoPostDuplicatesFill :: WPLens b s -> (Maybe (MVar (Maybe IntSet))) -> Fill s
+wpNoPostDuplicatesFill :: MonadIO m => WPLens b s -> (Maybe (MVar (Maybe IntSet))) -> Fill s m
 wpNoPostDuplicatesFill wpLens mPostIdSet= rawTextFill' $
   do case mPostIdSet of
        Just mvar -> liftIO $ modifyMVar_ mvar (\currentValue -> return (Just IntSet.empty))
        Nothing -> return ()
      return ""
 
-wpPageFill :: WPLens b s -> Fill s
+wpPageFill :: MonadIO m => WPLens b s -> Fill s m
 wpPageFill wpLens =
   useAttrs (a "name") pageFill
   where pageFill Nothing = rawTextFill ""
@@ -330,7 +338,7 @@ wpPageFill wpLens =
                                       _ -> ""
                        _ -> ""
 
-postSubs :: Wordpress b -> [Field s] -> Object -> Substitutions s
+postSubs :: MonadIO m => Wordpress b -> [Field s m] -> Object -> Substitutions s m
 postSubs wp extra object = subs (map (buildSplice object) (mergeFields postFields extra))
   where buildSplice o (F n) =
           (transformName n, rawTextFill $ getText (fromText n) o)
@@ -428,11 +436,12 @@ filterTaxonomies attrs =
 taxDictKeys :: [TaxSpecList] -> [WPKey]
 taxDictKeys = map (\(TaxSpecList tName _) -> TaxDictKey tName)
 
-wpPrefetch :: Wordpress b
-           -> [Field s]
-           -> StateT s IO Text
+wpPrefetch :: MonadIO m
+           => Wordpress b
+           -> [Field s m]
+           -> StateT s m Text
            -> WPLens b s
-           -> Fill s
+           -> Fill s m
 wpPrefetch wp extra uri wpLens = Fill $ \ _m (p, tpl) l -> do
     Wordpress{..} <- use wpLens
     mKeys <- liftIO $ newMVar []
@@ -440,26 +449,28 @@ wpPrefetch wp extra uri wpLens = Fill $ \ _m (p, tpl) l -> do
     newPostIdSet <- liftIO $ newMVar Nothing
     wpKeys <- liftIO $ readMVar mKeys
     void $ liftIO $ concurrently $ map cachingGet wpKeys
-    runTemplate tpl p (wordpressSubs wp extra uri wpLens (Just newPostIdSet)) l
+    fmap fst $ runTemplate tpl p (wordpressSubs wp extra uri wpLens (Just newPostIdSet)) l
 
-prefetchSubs :: Wordpress b -> MVar [WPKey] -> Substitutions s
+prefetchSubs :: MonadIO m => Wordpress b -> MVar [WPKey] -> Substitutions s m
 prefetchSubs wp mkeys =
   subs [ ("wpPosts", wpPostsPrefetch wp mkeys)
        , ("wpPage", useAttrs (a"name") $ wpPagePrefetch mkeys) ]
 
-wpPostsPrefetch :: Wordpress b
+wpPostsPrefetch :: MonadIO m
+                => Wordpress b
                 -> MVar [WPKey]
-                -> Fill s
+                -> Fill s m
 wpPostsPrefetch wp mKeys = Fill $ \attrs _ _ ->
   do let postsQuery = parseQueryNode (Map.toList attrs)
      filters <- liftIO $ mkFilters wp (qtaxes postsQuery)
      let key = mkWPKey filters postsQuery
      liftIO $ modifyMVar_ mKeys (\keys -> return $ key : keys)
-     return ""
+     return $ TextOutput ""
 
-wpPagePrefetch :: MVar [WPKey]
+wpPagePrefetch :: MonadIO m
+               => MVar [WPKey]
                -> Text
-               -> Fill s
+               -> Fill s m
 wpPagePrefetch mKeys name = rawTextFill' $
   do let key = PageKey name
      liftIO $ modifyMVar_ mKeys (\keys -> return $ key : keys)

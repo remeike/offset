@@ -31,8 +31,8 @@ import qualified Network.HTTP.Types.Header as H
 import           Network.Wai             (defaultRequest, rawPathInfo)
 import           Prelude                 hiding ((++))
 import           Test.Hspec
+import           TK
 import           Web.Fn
-import           Web.Larceny
 
 import           Web.Offset
 import           Web.Offset.Cache.Redis
@@ -45,8 +45,8 @@ import           Web.Offset.Types
 data Ctxt = Ctxt { _req       :: FnRequest
                  , _redis     :: R.Connection
                  , _wordpress :: Wordpress Ctxt
-                 , _wpsubs    :: Substitutions Ctxt
-                 , _lib       :: Library Ctxt
+                 , _wpsubs    :: Substitutions Ctxt IO
+                 , _lib       :: Library Ctxt IO
                  }
 
 makeLenses ''Ctxt
@@ -107,7 +107,7 @@ boolFieldTrue = object [ "person" .= object [ "name" .= ("Ada Lovelace" :: Text 
 boolFieldFalse :: Value
 boolFieldFalse = object [ "person" .= False ]
 
-customFields :: [Field s]
+customFields :: Monad m => [Field s m]
 customFields = [N "featured_image"
                  [N "attachment_meta"
                    [N "sizes"
@@ -124,7 +124,7 @@ customFields = [N "featured_image"
                ,M "authors" [F "name"]
                ,B "boolean" ]
 
-departmentFill :: [Object] -> Fill s
+departmentFill :: Monad m => [Object] -> Fill s m
 departmentFill objs =
   let singleText :: Object -> Text
       singleText o = toStr $ KM.lookup "name" o
@@ -133,7 +133,7 @@ departmentFill objs =
   mapSubs (\x -> subs [("name", textFill x)])
     (map singleText objs)
 
-tplLibrary :: Library Ctxt
+tplLibrary :: Library Ctxt IO
 tplLibrary =
   M.fromList [(["single"], parse "<wp><wpPostByPermalink><wpTitle/></wpPostByPermalink></wp>")
              ,(["single-page"], parse "<wpPage name=a-first-page />")
@@ -171,8 +171,8 @@ renderLarceny ctxt name =
   do let tpl = M.lookup [name] tplLibrary
      case tpl of
        Just t -> do
-         rendered <- evalStateT (runTemplate t [name] (ctxt ^. wpsubs) tplLibrary) ctxt
-         return $ Just rendered
+         (rendered, _) <- evalStateT (runTemplate t [name] (ctxt ^. wpsubs) tplLibrary) ctxt
+         return $ Just $ toHtml rendered
        _ -> return Nothing
 
 renderFeedContent :: Ctxt -> Object -> IO (Maybe T.Text)
@@ -282,7 +282,7 @@ unobj :: Value -> Object
 unobj (Object x) = x
 unobj _ = error "Not an object"
 
-toTpl :: Text -> Template s
+toTpl :: Monad m => Text -> Template s m
 toTpl tpl = parse (TL.fromStrict tpl)
 
 ignoreWhitespace :: Text -> Text
@@ -294,8 +294,8 @@ shouldRender :: TemplateText
 shouldRender t output = do
   ctxt <- initFauxRequestNoCache
   let s = _wpsubs ctxt
-  rendered <- evalStateT (runTemplate (toTpl t) ["fake-template"] s tplLibrary) ctxt
-  ignoreWhitespace rendered `shouldBe` ignoreWhitespace output
+  (rendered, _) <- evalStateT (runTemplate (toTpl t) ["fake-template"] s tplLibrary) ctxt
+  ignoreWhitespace (toHtml rendered) `shouldBe` ignoreWhitespace output
 
 -- Caching helpers
 
