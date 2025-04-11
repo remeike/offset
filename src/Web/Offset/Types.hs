@@ -98,7 +98,7 @@ instance ToJSON (CI.CI BS.ByteString) where
   toJSON str = toJSON $ T.toLower $ T.decodeUtf8 $ CI.original str
 instance FromJSON (CI.CI BS.ByteString) where
   parseJSON (String str) = return $ CI.mk $ T.encodeUtf8 str
-  parseJSON _ = mzero
+  parseJSON _ = fail "Expected String"
 
 instance ToJSON BS.ByteString where
   toJSON str = toJSON $ T.decodeUtf8 str
@@ -160,7 +160,7 @@ newtype TaxRes = TaxRes (Int, Text) deriving (Show)
 
 instance FromJSON TaxRes where
   parseJSON (Object o) = TaxRes <$> ((,) <$> o .: "id" <*> o .: "slug")
-  parseJSON _ = mzero
+  parseJSON _ = fail "Expected Object"
 
 data TaxDict = TaxDict { dict :: [TaxRes]
                        , desc :: Text} deriving (Show)
