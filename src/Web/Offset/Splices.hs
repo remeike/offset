@@ -7,6 +7,7 @@
 
 module Web.Offset.Splices where
 
+import           Control.Monad           (void)
 import           Control.Monad.State
 import           Control.Applicative     ((<|>))
 import           Control.Lens            hiding (children)
