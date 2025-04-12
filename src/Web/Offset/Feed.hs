@@ -29,7 +29,7 @@ import           Web.Offset.Utils
 
 data FeedFormat = AtomFeed | RSSFeed
 
-data WPFeed =
+data WPFeed m =
   WPFeed { wpFeedFormat  :: FeedFormat
          , wpFeedURI     :: T.Text
          , wpFeedTitle   :: T.Text
@@ -38,19 +38,20 @@ data WPFeed =
          , wpBaseURI     :: T.Text
          , wpBuildLinks  :: Object -> [O.Link]
          , wpGetAuthors  :: WPAuthorStyle
-         , wpRenderEntry :: Object -> IO (Maybe T.Text) }
+         , wpRenderEntry :: Object -> m (Maybe T.Text) }
 
 data WPAuthorStyle = GuestAuthors | DefaultAuthor
 
-makeItem :: Wordpress b
-        -> WPFeed
-        -> WPEntry
-        -> IO [ItemElem]
+makeItem :: MonadIO m
+         => Wordpress b
+         -> WPFeed m
+         -> WPEntry
+         -> m [ItemElem]
 makeItem wp wpFeed entry@WPEntry{..} = do
   content <- wpEntryContent (wpRenderEntry wpFeed) entry
   let guid = entryGuid (wpBaseURI wpFeed) wpEntryId wpEntryJSON
   let baseEntry = makeEntry guid (TextHTML wpEntryTitle) wpEntryUpdated
-  authors <- case wpGetAuthors wpFeed of
+  authors <- liftIO $ case wpGetAuthors wpFeed of
                GuestAuthors -> getAuthorsInline wpEntryJSON
                DefaultAuthor -> getAuthorViaReq wp wpEntryJSON
   return [
@@ -61,9 +62,9 @@ makeItem wp wpFeed entry@WPEntry{..} = do
           , PubDate wpEntryPublished
           ]
 
-generateRSSFeed :: Wordpress b -> WPFeed -> IO String
+generateRSSFeed :: MonadIO m => Wordpress b -> WPFeed m -> m String
 generateRSSFeed wp wpFeed = do
-    wpEntries <- getWPEntries wp
+    wpEntries <- liftIO $  getWPEntries wp
     let mostRecentUpdate = maximum (map wpEntryUpdated wpEntries)
 
     items <- mapM (makeItem wp wpFeed) wpEntries
@@ -78,9 +79,9 @@ generateRSSFeed wp wpFeed = do
 
     return $ showXML $ rssToXML rss
 
-toXMLFeed :: Wordpress b -> WPFeed -> IO T.Text
+toXMLFeed :: MonadIO m => Wordpress b -> WPFeed m -> m T.Text
 toXMLFeed wp wpFeed@(WPFeed format uri title icon logo _ _ _ _) = do
-  wpEntries <- getWPEntries wp
+  wpEntries <- liftIO $ getWPEntries wp
   let mostRecentUpdate = maximum (map wpEntryUpdated wpEntries)
   entries <- mapM (toEntry wp wpFeed) wpEntries
   let feed = (makeFeed (unsafeURI $ T.unpack uri) (TextPlain title) mostRecentUpdate)
@@ -134,21 +135,23 @@ allPostsQuery =
                 , quser    = Nothing
                 , qtaxes   = [] }
 
-wpEntryContent :: (Object -> IO (Maybe T.Text))
+wpEntryContent :: MonadIO m
+               => (Object -> m (Maybe T.Text))
                -> WPEntry
-               -> IO (Maybe (Web.Atom.Content e))
+               -> m (Maybe (Web.Atom.Content e))
 wpEntryContent renderer wpentry =
   (fmap . fmap) InlineHTMLContent (renderer $ wpEntryJSON wpentry)
 
-toEntry :: Wordpress b
-        -> WPFeed
+toEntry :: MonadIO m
+        => Wordpress b
+        -> WPFeed m
         -> WPEntry
-        -> IO (Entry e)
+        -> m (Entry e)
 toEntry wp wpFeed entry@WPEntry{..} = do
   content <- wpEntryContent (wpRenderEntry wpFeed) entry
   let guid = entryGuid (wpBaseURI wpFeed) wpEntryId wpEntryJSON
   let baseEntry = makeEntry guid (TextHTML wpEntryTitle) wpEntryUpdated
-  authors <- case wpGetAuthors wpFeed of
+  authors <- liftIO $ case wpGetAuthors wpFeed of
                GuestAuthors -> getAuthorsInline wpEntryJSON
                DefaultAuthor -> getAuthorViaReq wp wpEntryJSON
   return $ baseEntry { entryPublished = Just wpEntryPublished
