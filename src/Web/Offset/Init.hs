@@ -23,14 +23,14 @@ initWordpress :: MonadIO m
               -> R.Connection
               -> StateT s m Text
               -> WPLens b s
-              -> m (Wordpress b, Substitutions s m)
+              -> IO (Wordpress b, Substitutions s m)
 initWordpress wpconf redis getURI wpLens = do
   let rrunRedis = R.runRedis redis
   let logf = wpLogInt $ wpConfLogger wpconf
   let wpReq = case wpConfRequester wpconf of
                 Left (u,p) -> wreqRequester logf u p
                 Right r -> r
-  active <- liftIO $ newMVar Map.empty
+  active <- newMVar Map.empty
   let wpInt = WordpressInt{ wpRequest = wpRequestInt wpReq (wpConfEndpoint wpconf)
                           , wpCacheSet = wpCacheSetInt rrunRedis (wpConfCacheBehavior wpconf)
                           , wpCacheGet = wpCacheGetInt rrunRedis (wpConfCacheBehavior wpconf)
