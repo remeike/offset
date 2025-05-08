@@ -8,8 +8,8 @@ import           Control.Monad.State
 import qualified Data.Map                as Map
 import           Data.Text               (Text)
 import qualified Database.Redis          as R
-import           Web.Larceny
 import qualified Data.IntSet as IntSet
+import           TK
 
 import           Web.Offset.Cache
 import           Web.Offset.HTTP
@@ -17,11 +17,13 @@ import           Web.Offset.Internal
 import           Web.Offset.Splices
 import           Web.Offset.Types
 
-initWordpress :: WordpressConfig s
+
+initWordpress :: MonadIO m
+              => WordpressConfig s m
               -> R.Connection
-              -> StateT s IO Text
+              -> StateT s m Text
               -> WPLens b s
-              -> IO (Wordpress b, Substitutions s)
+              -> IO (Wordpress b, Substitutions s m)
 initWordpress wpconf redis getURI wpLens = do
   let rrunRedis = R.runRedis redis
   let logf = wpLogInt $ wpConfLogger wpconf

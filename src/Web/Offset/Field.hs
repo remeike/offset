@@ -10,23 +10,24 @@ import           Data.Text        (Text)
 import qualified Data.Text        as T
 import           Data.Time.Clock  (UTCTime)
 import           Data.Time.Format (defaultTimeLocale, formatTime)
-import           Web.Larceny
+import           TK
 
 import           Web.Offset.Date
 
-data Field s = F Text -- A single flat text or number field
-             | B Text -- A single flat boolean field
-             | Q Text IdToEndpoint -- A field that will make another request
-             | QM Text IdsToEndpoint -- A list of fields that will make another request
-             | P Text (Text -> Fill s) -- A customly parsed flat field
-             | PV Text (Maybe Value -> Fill s) -- A customly parsed value field
-             | PN Text (Object -> Fill s) -- A customly parsed nested field
-             | PM Text ([Object] -> Fill s) -- A customly parsed list field
-             | N Text [Field s] -- A nested object field
-             | C Text [Text] -- A nested text field that is found by following the specified path
-             | CB Text [Text]  -- A nested bool field that is found by following the specified path
-             | CN Text [Text] [Field s] -- A nested set of fields that is found by following the specified path
-             | M Text [Field s] -- A list field, where each element is an object
+data Field s m
+  = F Text -- A single flat text or number field
+  | B Text -- A single flat boolean field
+  | Q Text IdToEndpoint -- A field that will make another request
+  | QM Text IdsToEndpoint -- A list of fields that will make another request
+  | P Text (Text -> Fill s m) -- A customly parsed flat field
+  | PV Text (Maybe Value -> Fill s m) -- A customly parsed value field
+  | PN Text (Object -> Fill s m) -- A customly parsed nested field
+  | PM Text ([Object] -> Fill s m) -- A customly parsed list field
+  | N Text [Field s m] -- A nested object field
+  | C Text [Text] -- A nested text field that is found by following the specified path
+  | CB Text [Text]  -- A nested bool field that is found by following the specified path
+  | CN Text [Text] [Field s m] -- A nested set of fields that is found by following the specified path
+  | M Text [Field s m] -- A list field, where each element is an object
 
 data IdToEndpoint = UseId Text | UseSlug Text deriving (Eq, Show)
 data IdsToEndpoint =  UseInclude Text deriving (Eq, Show)
@@ -35,7 +36,7 @@ data IdsToEndpoint =  UseInclude Text deriving (Eq, Show)
 -- In truth, our definition is wrong because of the functions inside of 'P' variants.
 -- NOTE(emh 2017-02-09): Moving this to Field to avoid orphan instance (even though we
 -- want this to be orphaned!). This eq instance is only for testing!!
-instance Eq (Field s) where
+instance Eq (Field s m) where
   F t1 == F t2 = t1 == t2
   B t1 == B t2 = t1 == t2
   Q t1 tE1 == Q t2 tE2 = t1 == t2 && tE1 == tE2
@@ -49,10 +50,10 @@ instance Eq (Field s) where
   _ == _ = True -- wait
 
 
-mergeFields :: [Field s] -> [Field s] -> [Field s]
+mergeFields :: [Field s m] -> [Field s m] -> [Field s m]
 mergeFields fo [] = fo
 mergeFields fo (f:fs) = mergeFields (overrideInList False f fo) fs
-  where overrideInList :: Bool -> Field s -> [Field s] -> [Field s]
+  where overrideInList :: Bool -> Field s m -> [Field s m] -> [Field s m]
         overrideInList False fl [] = [fl]
         overrideInList True _ [] = []
         overrideInList v fl (m:ms) = if matchesName m fl
@@ -78,7 +79,7 @@ mergeFields fo (f:fs) = mergeFields (overrideInList False f fo) fs
         mergeField (M _ left) (M nm right) = M nm (mergeFields left right)
         mergeField _ right = right
 
-instance Show (Field s) where
+instance Show (Field s m) where
   show (F t) = "F(" <> T.unpack t <> ")"
   show (B t) = "B(" <> T.unpack t <> ")"
   show (Q t e) = "Q("<> T.unpack t <> ":" <> show e <>")"
@@ -93,7 +94,7 @@ instance Show (Field s) where
   show (CN t p fs) = "C(" <> T.unpack t <> "," <> T.unpack (T.intercalate "/" p) <> ","<> show fs <> ")"
   show (M t m) = "M(" <> T.unpack t <> "," <> show m <> ")"
 
-postFields :: [Field s]
+postFields :: Monad m => [Field s m]
 postFields = [F "id"
              ,C "title" ["title", "rendered"]
              ,F "status"
@@ -116,7 +117,7 @@ postFields = [F "id"
                         ,M "post_tag" [F "id", F "name", F "slug", F "count"]]
              ]
 
-datePartSubs :: UTCTime -> Substitutions s
+datePartSubs :: Monad m => UTCTime -> Substitutions s m
 datePartSubs date = subs [ ("wpYear",     datePartFill "%0Y" date)
                          , ("wpMonth",    datePartFill "%m"  date)
                          , ("wpDay",      datePartFill "%d"  date)
@@ -126,7 +127,7 @@ datePartSubs date = subs [ ("wpYear",     datePartFill "%0Y" date)
                    let f = fromMaybe defaultFormat mf in
                    rawTextFill $ T.pack $ formatTime defaultTimeLocale (T.unpack f) utcTime
 
-wpDateFill :: Text -> Fill s
+wpDateFill :: Monad m => Text -> Fill s m
 wpDateFill date =
   let wpFormat = "%Y-%m-%dT%H:%M:%S" in
   case parseWPDate wpFormat date of

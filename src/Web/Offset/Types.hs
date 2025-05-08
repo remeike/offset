@@ -98,7 +98,7 @@ instance ToJSON (CI.CI BS.ByteString) where
   toJSON str = toJSON $ T.toLower $ T.decodeUtf8 $ CI.original str
 instance FromJSON (CI.CI BS.ByteString) where
   parseJSON (String str) = return $ CI.mk $ T.encodeUtf8 str
-  parseJSON _ = mzero
+  parseJSON _ = fail "Expected String"
 
 instance ToJSON BS.ByteString where
   toJSON str = toJSON $ T.decodeUtf8 str
@@ -120,15 +120,15 @@ newtype Requester = Requester { unRequester :: Text
                                             -> [(Text, Text)]
                                             -> IO (Either Int WPResponse) }
 
-data WordpressConfig m =
+data WordpressConfig s m =
      WordpressConfig { wpConfEndpoint      :: Text
                      , wpConfRequester     :: Either UserPassword Requester
                      , wpConfCacheBehavior :: CacheBehavior
-                     , wpConfExtraFields   :: [Field m]
+                     , wpConfExtraFields   :: [Field s m]
                      , wpConfLogger        :: Maybe (Text -> IO ())
                      }
 
-instance Default (WordpressConfig m) where
+instance Default (WordpressConfig s m) where
   def = WordpressConfig "http://127.0.0.1:8080/wp-json"
                         (Left ("offset", "111"))
                         (CacheSeconds 600)
@@ -160,7 +160,7 @@ newtype TaxRes = TaxRes (Int, Text) deriving (Show)
 
 instance FromJSON TaxRes where
   parseJSON (Object o) = TaxRes <$> ((,) <$> o .: "id" <*> o .: "slug")
-  parseJSON _ = mzero
+  parseJSON _ = fail "Expected Object"
 
 data TaxDict = TaxDict { dict :: [TaxRes]
                        , desc :: Text} deriving (Show)

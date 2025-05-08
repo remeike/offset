@@ -6,7 +6,7 @@ extra-deps:
    commit: 2365dd816915548833b453c3d53f3addedbb3f16
    subdirs:
     - fn-monadic
- - git: https://github.com/positiondev/larceny
-   commit: 494dcf620577f96bc797f1ba7f75d9053079c12f
+ - git: https://github.com/remeike/tk
+   commit: ba78d160e86f41bd1f029e039f58b1456006663f
 
 resolver: lts-20.26

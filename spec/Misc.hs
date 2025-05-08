@@ -18,25 +18,25 @@ tests :: Spec
 tests = do
   describe "mergeFields" $ do
     it "should be able to right-bias merge two Field trees" $
-      mergeFields [F "ID", F "status"] ([P "status" undefined] :: [Field (StateT () IO Text)])
+      mergeFields [F "ID", F "status"] ([P "status" undefined] :: [Field (StateT () IO Text) IO])
         `shouldBe` [F "ID", P "status" undefined]
     it "should be able to override nested fields" $
-      mergeFields [N "status" [F "foo"]] ([N "status" [P "foo" undefined]] :: [Field (StateT () IO Text)])
+      mergeFields [N "status" [F "foo"]] ([N "status" [P "foo" undefined]] :: [Field (StateT () IO Text) IO])
         `shouldBe` [N "status" [P "foo" undefined]]
     it "should be able to override nested fields, but not lose unaffected ones" $
-      mergeFields [N "status" [F "foo", F "bar"]] ([N "status" [M "foo" []]] :: [Field (StateT () IO Text)])
+      mergeFields [N "status" [F "foo", F "bar"]] ([N "status" [M "foo" []]] :: [Field (StateT () IO Text) IO])
         `shouldBe` [N "status" [M "foo" [], F "bar"]]
     it "should not change order of fields in left" $
-      mergeFields [F "ID", F "status"] ([F "status", F "ID"] :: [Field (StateT () IO Text)])
+      mergeFields [F "ID", F "status"] ([F "status", F "ID"] :: [Field (StateT () IO Text) IO])
         `shouldBe` [F "ID", F "status"]
     it "should be able to override nested with flat" $
-      mergeFields [N "status" [F "foo", F "bar"]] ([F "status"] :: [Field (StateT () IO Text)])
+      mergeFields [N "status" [F "foo", F "bar"]] ([F "status"] :: [Field (StateT () IO Text) IO])
         `shouldBe` [F "status"]
     it "should be able to override flat with nested" $
-      mergeFields ([F "status"] :: [Field (StateT () IO Text)]) [N "status" [F "foo", F "bar"]]
+      mergeFields ([F "status"] :: [Field (StateT () IO Text) IO]) [N "status" [F "foo", F "bar"]]
         `shouldBe` [N "status" [F "foo", F "bar"]]
     it "should be able to add to elements nested" $
-      mergeFields ([N "featured_image" [N "attachment_meta" [F "standard"]]] :: [Field (StateT () IO Text)])
+      mergeFields ([N "featured_image" [N "attachment_meta" [F "standard"]]] :: [Field (StateT () IO Text) IO])
                   [N "featured_image" [N "attachment_meta" [F "mag-featured"]]]
         `shouldBe` [N "featured_image" [N "attachment_meta" [F "standard"
                                                             ,F "mag-featured"]]]

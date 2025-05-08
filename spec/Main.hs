@@ -20,8 +20,8 @@ import           Network.Wai                    (defaultRequest, rawPathInfo)
 import           Test.Hspec                     hiding (shouldBe, shouldNotBe,
                                                  shouldReturn)
 import           Test.Hspec.Expectations.Pretty
+import           TK
 import           Web.Fn
-import           Web.Larceny
 
 import           Web.Offset
 import           Web.Offset.Types
@@ -148,7 +148,7 @@ larcenyFillTests = do
                  $ (\(_,y) -> (requestWithUrl, y)) defaultFnRequest
       let s = view wpsubs ctxt'
       let tpl = toTpl "<wp><wpNoPostDuplicates/><wpPostByPermalink><wpTitle/></wpPostByPermalink><wpPosts limit=1><wpTitle/></wpPosts></wp>"
-      rendered <- evalStateT (runTemplate tpl [] s mempty) ctxt'
+      rendered <- fmap (toHtml . fst) $ evalStateT (runTemplate tpl [] s mempty) ctxt'
       rendered `shouldBe` "<i>Foo</i> bar"
 
   describe "extra request fields" $ do
@@ -159,7 +159,7 @@ larcenyFillTests = do
                  $ (\(_,y) -> (requestWithUrl, y)) defaultFnRequest
       let s = view wpsubs ctxt'
       let tpl = toTpl "<wp><wpPostByPermalink><wpDepartment><wpName /></wpDepartment></wpPostByPermalink></wp>"
-      rendered <- evalStateT (runTemplate tpl [] s mempty) ctxt'
+      rendered <- fmap (toHtml . fst) $ evalStateT (runTemplate tpl [] s mempty) ctxt'
       rendered `shouldBe` "Sports"
     it "should render content accessed via an additional request using multiple IDs in the JSON" $ do
       ctxt <- initFauxRequestNoCache
@@ -168,7 +168,7 @@ larcenyFillTests = do
                  $ (\(_,y) -> (requestWithUrl, y)) defaultFnRequest
       let s = view wpsubs ctxt'
       let tpl = toTpl "<wp><wpPostByPermalink><wpGuestAuthors><wpName /></wpGuestAuthors></wpPostByPermalink></wp>"
-      rendered <- evalStateT (runTemplate tpl [] s mempty) ctxt'
+      rendered <- fmap (toHtml . fst) $ evalStateT (runTemplate tpl [] s mempty) ctxt'
       rendered `shouldBe` "Lucy ParsonsEmma Goldman"
 
 
